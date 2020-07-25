@@ -58,34 +58,6 @@ def bidct2(cff):
     return img
 
 
-def sum_swt2(a, b):
-
-    c = cp.deepcopy(a)
-
-    for d in range(DLV):
-        a[d] = list(a[d])
-        b[d] = list(b[d])
-        c[d] = list(c[d])
-        c[d][0] = np.array(a[d][0]) + np.array(b[d][0])
-        c[d][1] = np.array(a[d][1]) + np.array(b[d][1])
-
-    return c
-
-
-def dif_swt2(a, b):
-
-    c = cp.deepcopy(a)
-
-    for d in range(DLV):
-        a[d] = list(a[d])
-        b[d] = list(b[d])
-        c[d] = list(c[d])
-        c[d][0] = np.array(a[d][0]) - np.array(b[d][0])
-        c[d][1] = np.array(a[d][1]) - np.array(b[d][1])
-
-    return c
-
-
 def thresh_swt2(cff, t):
 
     c = cp.deepcopy(cff)
@@ -98,62 +70,16 @@ def thresh_swt2(cff, t):
     return c
 
 
-def proj(c, u, l):
+def proj_dct2(c, u, l):
 
     return np.minimum(np.maximum(c, l), u)
 
-
-def PhaseMax(anc_vec, con_upp, con_low, reg_prm, pen_prm):
-
-    # image size
-    row = anc_vec.shape[0]
-    col = anc_vec.shape[1]
-
-    # zero buffer
-    zero_array = np.zeros([row, col])
-    zero_tuple = pw.swt2(zero_array, QMF, DLV, norm=True)
-
-    # variables
-    prim = zero_array
-    aux1 = zero_array
-    aux2 = zero_tuple
-    lag1 = zero_array
-    lag2 = zero_tuple
-
-    # begin iteration
-    for i in range(50):
-
-        # update prim
-        tmp0 = bidct2(aux1 - lag1)
-        prim = dif_swt2(aux2, lag2)
-        prim = pw.iswt2(prim, QMF, DLV)
-        prim = (tmp0 + prim + anc_vec / pen_prm) / 2.0
-
-        # update aux1
-        tmp1 = bdct2(prim)
-        aux1 = tmp1 + lag1
-        aux1 = proj(aux1, con_upp, con_low)
-
-        # update aux2
-        tmp2 = pw.swt2(prim, QMF, DLV, norm=True)
-        aux2 = sum_swt2(tmp2, lag2)
-        aux2 = thresh_swt2(aux2, reg_prm / pen_prm)
-
-        # update lag1
-        lag1 = lag1 + tmp1 - aux1
-
-        # Update lag2
-        lag2 = sum_swt2(lag2, dif_swt2(tmp2, aux2))
-
-    return prim
 
 def fienup(anc_vec, con_upp, con_low, reg_prm):
 
     # initial guess
     rec = cp.deepcopy(anc_vec)
     rec = pw.swt2(rec, QMF, DLV, norm=True)
-
-    mag = np.abs(bdct2(anc_vec))
 
     for i in range(50):
         
@@ -163,44 +89,7 @@ def fienup(anc_vec, con_upp, con_low, reg_prm):
         # projection
         rec = pw.iswt2(rec, QMF, DLV)
         rec = bdct2(rec)
-        rec = proj(rec, con_upp, con_low)
-        rec = bidct2(rec)
-        rec = pw.swt2(rec, QMF, DLV, norm=True)
-        
-    return pw.iswt2(rec, QMF, DLV)
-
-def WirtingerFlow(anc_vec, con_upp, con_low):
-
-    # image size
-    row = anc_vec.shape[0]
-    col = anc_vec.shape[1]
-    
-    # initial guess
-    rec = cp.deepcopy(anc_vec)
-    rec = pw.swt2(rec, QMF, DLV, norm=True)
-
-    # magnitude of cff
-    mag = bdct2(anc_vec) ** 2
-
-    # step size
-    stp = 0.23 / np.average(mag)
-    
-    for i in range(20):
-
-        # gradient descent
-        #tmp = bdct2(pw.iswt2(rec, QMF, DLV))
-        #grd = tmp * (tmp ** 2 - mag) 
-        #grd = bidct2(stp * grd / row / col)
-        #grd = pw.swt2(grd, QMF, DLV, norm=True)
-        #rec = dif_swt2(rec, grd)
-
-        # thresholding
-        rec = thresh_swt2(rec, 10.0)
-        
-        # projection
-        rec = pw.iswt2(rec, QMF, DLV)
-        rec = bdct2(rec)
-        rec = proj(rec, con_upp, con_low)
+        rec = proj_dct2(rec, con_upp, con_low)
         rec = bidct2(rec)
         rec = pw.swt2(rec, QMF, DLV, norm=True)
 
@@ -244,23 +133,16 @@ if __name__ == '__main__':
 
     # constraint (upper)
     con_upp = np.zeros([row, col])
-    con_upp[ind_sbt] = +deg_cff[ind_sbt] + 0.0 * rep_qtz_tbl[ind_sbt]
-    con_upp[ind_sbf] = +deg_cff[ind_sbf] + 0.0 * rep_qtz_tbl[ind_sbf]
+    con_upp[ind_sbt] = +deg_cff[ind_sbt]
+    con_upp[ind_sbf] = +deg_cff[ind_sbf]
 
     # constraint (lower)
     con_low = np.zeros([row, col])
-    con_low[ind_sbt] = +deg_cff[ind_sbt] - 0.0 * rep_qtz_tbl[ind_sbt]
-    con_low[ind_sbf] = -deg_cff[ind_sbf] - 0.0 * rep_qtz_tbl[ind_sbf]
+    con_low[ind_sbt] = +deg_cff[ind_sbt]
+    con_low[ind_sbf] = -deg_cff[ind_sbf]
 
-    # sign retrieval via PhaseMax
-    rec_img = PhaseMax(anc_vec, con_upp, con_low, 1.0, 0.5)
-
-    # sign retrieval via Fienup method
-    # see "On Fienup methods for sparse phase retrieval"
-    #rec_img = fienup(anc_vec, con_upp, con_low, 5.0)
-
-    # sign retrieval via WirtingerFlow
-    #rec_img = WirtingerFlow(anc_vec, con_upp, con_low)
+    # sign retrieval via Fienup algorithm
+    rec_img = fienup(anc_vec, con_upp, con_low, 1.0)
 
     anc_vec = np.round(anc_vec)
     anc_vec = np.maximum(anc_vec, 0)
