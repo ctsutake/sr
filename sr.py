@@ -20,8 +20,7 @@ QTZ_TBL = np.array([
     [18, 22, 37, 56,  68, 109, 103,  77],
     [24, 35, 55, 64,  81, 104, 113,  92],
     [49, 64, 78, 87, 103, 121, 120, 101],
-    [72, 92, 95, 98, 112, 100, 103,  99]]
-    ) * 1.0
+    [72, 92, 95, 98, 112, 100, 103,  99]])
 
 # sign table
 SGN_TBL = np.array([
@@ -32,9 +31,8 @@ SGN_TBL = np.array([
     [False, False, False, False, False, False, False, False],
     [False, False, False, False, False, False, False, False],
     [False, False, False, False, False, False, False, False],
-    [False, False, False, False, False, False, False, False]]
-    )
-#SGN_TBL = np.ones([8, 8])
+    [False, False, False, False, False, False, False, False]])
+
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 
@@ -99,9 +97,11 @@ def thresh_swt2(cff, t):
 
     return c
 
+
 def proj(c, u, l):
-    
+
     return np.minimum(np.maximum(c, l), u)
+
 
 def PhaseMax(anc_vec, con_upp, con_low, reg_prm, pen_prm):
 
@@ -111,7 +111,6 @@ def PhaseMax(anc_vec, con_upp, con_low, reg_prm, pen_prm):
 
     # zero buffer
     zero_array = np.zeros([row, col])
-    #zero_array = np.random.normal(0, 1.0, [row, col])
     zero_tuple = pw.swt2(zero_array, QMF, DLV, norm=True)
 
     # variables
@@ -129,17 +128,17 @@ def PhaseMax(anc_vec, con_upp, con_low, reg_prm, pen_prm):
         prim = dif_swt2(aux2, lag2)
         prim = pw.iswt2(prim, QMF, DLV)
         prim = (tmp0 + prim + anc_vec / pen_prm) / 2.0
-        
+
         # update aux1
         tmp1 = bdct2(prim)
         aux1 = tmp1 + lag1
         aux1 = proj(aux1, con_upp, con_low)
-        
+
         # update aux2
         tmp2 = pw.swt2(prim, QMF, DLV, norm=True)
         aux2 = sum_swt2(tmp2, lag2)
         aux2 = thresh_swt2(aux2, reg_prm / pen_prm)
-        
+
         # update lag1
         lag1 = lag1 + tmp1 - aux1
 
@@ -148,35 +147,65 @@ def PhaseMax(anc_vec, con_upp, con_low, reg_prm, pen_prm):
 
     return prim
 
-def WirtingerFlow(anc_vec, con_upp, con_low, reg_prm):
-    
+def fienup(anc_vec, con_upp, con_low, reg_prm):
+
+    # initial guess
+    rec = cp.deepcopy(anc_vec)
+    rec = pw.swt2(rec, QMF, DLV, norm=True)
+
+    mag = np.abs(bdct2(anc_vec))
+
+    for i in range(50):
+        
+        # thresholding
+        rec = thresh_swt2(rec, reg_prm)
+        
+        # projection
+        rec = pw.iswt2(rec, QMF, DLV)
+        rec = bdct2(rec)
+        rec = proj(rec, con_upp, con_low)
+        rec = bidct2(rec)
+        rec = pw.swt2(rec, QMF, DLV, norm=True)
+        
+    return pw.iswt2(rec, QMF, DLV)
+
+def WirtingerFlow(anc_vec, con_upp, con_low):
+
     # image size
     row = anc_vec.shape[0]
     col = anc_vec.shape[1]
     
     # initial guess
     rec = cp.deepcopy(anc_vec)
+    rec = pw.swt2(rec, QMF, DLV, norm=True)
 
     # magnitude of cff
-    mag = np.abs(bidct2(anc_vec)) ** 2
+    mag = bdct2(anc_vec) ** 2
 
     # step size
-    stp = 0.23 / np.average(mag)    
+    stp = 0.23 / np.average(mag)
+    
+    for i in range(20):
 
-    for i in range(250):
+        # gradient descent
+        #tmp = bdct2(pw.iswt2(rec, QMF, DLV))
+        #grd = tmp * (tmp ** 2 - mag) 
+        #grd = bidct2(stp * grd / row / col)
+        #grd = pw.swt2(grd, QMF, DLV, norm=True)
+        #rec = dif_swt2(rec, grd)
+
+        # thresholding
+        rec = thresh_swt2(rec, 10.0)
         
-        # gradient descent 
-        tmp = bdct2(rec)
-        grd = bidct2((tmp ** 2 - mag) * tmp)
-        grd = grd / row / col
-        rec = rec - stp * grd
+        # projection
+        rec = pw.iswt2(rec, QMF, DLV)
+        rec = bdct2(rec)
+        rec = proj(rec, con_upp, con_low)
+        rec = bidct2(rec)
+        rec = pw.swt2(rec, QMF, DLV, norm=True)
 
-        # threhsolding 
-        tmp = pw.swt2(rec, QMF, DLV, norm=True)
-        tmp = thresh_swt2(tmp, 0.02)
-        rec = pw.iswt2(tmp, QMF, DLV)
+    return pw.iswt2(rec, QMF, DLV)
 
-    return rec
 
 if __name__ == '__main__':
 
@@ -215,19 +244,23 @@ if __name__ == '__main__':
 
     # constraint (upper)
     con_upp = np.zeros([row, col])
-    con_upp[ind_sbt] = +deg_cff[ind_sbt] + 0.5 * rep_qtz_tbl[ind_sbt]
-    con_upp[ind_sbf] = +deg_cff[ind_sbf] + 0.5 * rep_qtz_tbl[ind_sbf]
+    con_upp[ind_sbt] = +deg_cff[ind_sbt] + 0.0 * rep_qtz_tbl[ind_sbt]
+    con_upp[ind_sbf] = +deg_cff[ind_sbf] + 0.0 * rep_qtz_tbl[ind_sbf]
 
     # constraint (lower)
     con_low = np.zeros([row, col])
-    con_low[ind_sbt] = +deg_cff[ind_sbt] - 0.5 * rep_qtz_tbl[ind_sbt]
-    con_low[ind_sbf] = -deg_cff[ind_sbf] - 0.5 * rep_qtz_tbl[ind_sbf]
+    con_low[ind_sbt] = +deg_cff[ind_sbt] - 0.0 * rep_qtz_tbl[ind_sbt]
+    con_low[ind_sbf] = -deg_cff[ind_sbf] - 0.0 * rep_qtz_tbl[ind_sbf]
 
     # sign retrieval via PhaseMax
-    rec_img = PhaseMax(anc_vec, con_upp, con_low, 100, 0.5)
+    rec_img = PhaseMax(anc_vec, con_upp, con_low, 1.0, 0.5)
+
+    # sign retrieval via Fienup method
+    # see "On Fienup methods for sparse phase retrieval"
+    #rec_img = fienup(anc_vec, con_upp, con_low, 5.0)
 
     # sign retrieval via WirtingerFlow
-    #rec_img = WirtingerFlow(anc_vec, con_upp, con_low, 150)
+    #rec_img = WirtingerFlow(anc_vec, con_upp, con_low)
 
     anc_vec = np.round(anc_vec)
     anc_vec = np.maximum(anc_vec, 0)
