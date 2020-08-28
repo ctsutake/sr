@@ -1,15 +1,16 @@
+# package
 import copy as cp
 import pywt as pw
 import numpy as np
-import scipy.fftpack
 import skimage.io
 import skimage.metrics
+import scipy.fftpack
 
 # quadrature mirror filter
-QMF = 'sym6'
+QMF = 'dmey'
 
 # decomposition level
-DLV = 2
+DLV = 1
 
 # quantization table
 QTZ_TBL = np.array([
@@ -24,9 +25,9 @@ QTZ_TBL = np.array([
 
 # sign table
 SGN_TBL = np.array([
-    [ True,  True,  True, False, False, False, False, False],
-    [ True,  True, False, False, False, False, False, False],
     [ True, False, False, False, False, False, False, False],
+    [False, False, False, False, False, False, False, False],
+    [False, False, False, False, False, False, False, False],
     [False, False, False, False, False, False, False, False],
     [False, False, False, False, False, False, False, False],
     [False, False, False, False, False, False, False, False],
@@ -34,7 +35,6 @@ SGN_TBL = np.array([
     [False, False, False, False, False, False, False, False]])
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-
 
 def bdct2(img):
 
@@ -58,14 +58,13 @@ def bidct2(cff):
     return img
 
 
-def thresh_swt2(cff, t):
+def thresh_swt2(cff, val):
 
     c = cp.deepcopy(cff)
-
     for d in range(DLV):
         c[d] = list(c[d])
-        c[d][0] = np.sign(c[d][0]) * np.maximum(np.abs(c[d][0]) - t, 0)
-        c[d][1] = np.sign(c[d][1]) * np.maximum(np.abs(c[d][1]) - t, 0)
+        c[d][0] = pw.threshold(c[d][0], val)
+        c[d][1] = pw.threshold(c[d][1], val)
 
     return c
 
@@ -75,32 +74,35 @@ def proj_dct2(c, u, l):
     return np.minimum(np.maximum(c, l), u)
 
 
-def fienup(anc_vec, con_upp, con_low, reg_prm):
+def fienup(con_upp, con_low):
 
     # initial guess
-    rec = cp.deepcopy(anc_vec)
-    rec = pw.swt2(rec, QMF, DLV, norm=True)
+    rec_vec = bidct2((con_upp + con_low) / 2)
 
-    for i in range(50):
-        
+    for i in range(1024):
+        # copy
+        cpy_vec = rec_vec
+
         # thresholding
-        rec = thresh_swt2(rec, reg_prm)
-        
+        rec_vec = pw.swt2(rec_vec, QMF, DLV, norm=True)
+        rec_vec = thresh_swt2(rec_vec, 1)
+        rec_vec = pw.iswt2(rec_vec, QMF, DLV)
+
         # projection
-        rec = pw.iswt2(rec, QMF, DLV)
-        rec = bdct2(rec)
-        rec = proj_dct2(rec, con_upp, con_low)
-        rec = bidct2(rec)
-        rec = pw.swt2(rec, QMF, DLV, norm=True)
+        rec_vec = bdct2(rec_vec)
+        rec_vec = proj_dct2(rec_vec, con_upp, con_low)
+        rec_vec = bidct2(rec_vec)
 
-    return pw.iswt2(rec, QMF, DLV)
+        # acceleration
+        rec_vec = rec_vec + (i - 1) * (rec_vec - cpy_vec) / (i + 2)
 
+    return rec_vec
 
 if __name__ == '__main__':
 
     # original image
-    org_img = pw.data.camera()
-
+    org_img = skimage.io.imread('data/camera.png')
+    
     # image size
     row = org_img.shape[0]
     col = org_img.shape[1]
@@ -126,15 +128,10 @@ if __name__ == '__main__':
     # reduction of sign bit
     deg_cff[ind_sbf] = abs(deg_cff[ind_sbf])
 
-    # anchor vector
-    anc_vec = np.zeros([row, col])
-    anc_vec[ind_sbt] = deg_cff[ind_sbt]
-    anc_vec = bidct2(anc_vec)
-
     # constraint (upper)
     con_upp = np.zeros([row, col])
     con_upp[ind_sbt] = +deg_cff[ind_sbt]
-    con_upp[ind_sbf] = +deg_cff[ind_sbf]
+    con_upp[ind_sbf] = +deg_cff[ind_sbf] 
 
     # constraint (lower)
     con_low = np.zeros([row, col])
@@ -142,14 +139,9 @@ if __name__ == '__main__':
     con_low[ind_sbf] = -deg_cff[ind_sbf]
 
     # sign retrieval via Fienup algorithm
-    rec_img = fienup(anc_vec, con_upp, con_low, 1.0)
+    rec_img = fienup(con_upp, con_low)
 
-    anc_vec = np.round(anc_vec)
-    anc_vec = np.maximum(anc_vec, 0)
-    anc_vec = np.minimum(anc_vec, 255)
-    anc_vec = np.array(anc_vec, np.uint8)
-    skimage.io.imsave('anc.png', anc_vec)
-
+    # clip
     rec_img = np.round(rec_img)
     rec_img = np.maximum(rec_img, 0)
     rec_img = np.minimum(rec_img, 255)
@@ -157,5 +149,46 @@ if __name__ == '__main__':
     skimage.io.imsave('rec.png', rec_img)
 
     # PSNR
-    print("{:4.2f}".format(skimage.metrics.peak_signal_noise_ratio(org_img, anc_vec)))
-    print("{:4.2f}".format(skimage.metrics.peak_signal_noise_ratio(org_img, rec_img)))
+    print("rec: {:4.2f}".format(skimage.metrics.peak_signal_noise_ratio(org_img, rec_img)))
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+    # for comparison
+
+    # random image 
+    rnd_sgn = np.sign(np.random.normal(0, 1, [row, col]))
+    rec_img = deg_cff
+    rec_img[ind_sbf] = rec_img[ind_sbf] * rnd_sgn[ind_sbf]
+    rec_img = bidct2(rec_img)
+    
+    rec_img = np.round(rec_img)
+    rec_img = np.maximum(rec_img, 0)
+    rec_img = np.minimum(rec_img, 255)
+    rec_img = np.array(rec_img, np.uint8)
+    skimage.io.imsave('rnd.png', rec_img)
+
+    print("rnd: {:4.2f}".format(skimage.metrics.peak_signal_noise_ratio(org_img, rec_img)))
+
+    # partial image 
+    rec_img = np.zeros([row, col])
+    rec_img[ind_sbt] = deg_cff[ind_sbt]
+    rec_img = bidct2(rec_img)
+    
+    rec_img = np.round(rec_img)
+    rec_img = np.maximum(rec_img, 0)
+    rec_img = np.minimum(rec_img, 255)
+    rec_img = np.array(rec_img, np.uint8)
+    skimage.io.imsave('par.png', rec_img)
+
+    print("par: {:4.2f}".format(skimage.metrics.peak_signal_noise_ratio(org_img, rec_img)))
+
+    # jpg image
+    rec_img = np.round(org_cff / rep_qtz_tbl) * rep_qtz_tbl
+    rec_img = bidct2(rec_img)
+    
+    rec_img = np.round(rec_img)
+    rec_img = np.maximum(rec_img, 0)
+    rec_img = np.minimum(rec_img, 255)
+    rec_img = np.array(rec_img, np.uint8)
+    skimage.io.imsave('sdh.png', rec_img)
+
+    print("sdh: {:4.2f}".format(skimage.metrics.peak_signal_noise_ratio(org_img, rec_img)))
