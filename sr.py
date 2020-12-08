@@ -6,13 +6,28 @@ import skimage.io
 import skimage.metrics
 import scipy.fftpack
 
+# quality factor
+QF = 50
+
 # quadrature mirror filter
-QMF = 'dmey'
+QMF = 'sym12'
 
 # decomposition level
 DLV = 1
 
-# quantization table
+# outer iteration
+OUT_ITR = 3
+
+# inner iteration
+INN_ITR = 2
+
+# regularization parameter
+REG_PRM = 1.0
+
+# penalty parameter
+PEN_PRM = 0.01
+
+# quntization table
 QTZ_TBL = np.array([
     [16, 11, 10, 16,  24,  40,  51,  61],
     [12, 12, 14, 19,  26,  58,  60,  55],
@@ -22,17 +37,6 @@ QTZ_TBL = np.array([
     [24, 35, 55, 64,  81, 104, 113,  92],
     [49, 64, 78, 87, 103, 121, 120, 101],
     [72, 92, 95, 98, 112, 100, 103,  99]])
-
-# sign table
-SGN_TBL = np.array([
-    [ True, False, False, False, False, False, False, False],
-    [False, False, False, False, False, False, False, False],
-    [False, False, False, False, False, False, False, False],
-    [False, False, False, False, False, False, False, False],
-    [False, False, False, False, False, False, False, False],
-    [False, False, False, False, False, False, False, False],
-    [False, False, False, False, False, False, False, False],
-    [False, False, False, False, False, False, False, False]])
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
@@ -46,7 +50,6 @@ def bdct2(img):
     cff = np.reshape(cff.swapaxes(1, 2), (row, col))
     return cff
 
-
 def bidct2(cff):
 
     row = cff.shape[0]
@@ -57,138 +60,135 @@ def bidct2(cff):
     img = np.reshape(img.swapaxes(1, 2), (row, col))
     return img
 
-
-def thresh_swt2(cff, val):
-
-    c = cp.deepcopy(cff)
-    for d in range(DLV):
-        c[d] = list(c[d])
-        c[d][0] = pw.threshold(c[d][0], val)
-        c[d][1] = pw.threshold(c[d][1], val)
-
-    return c
-
-
-def proj_dct2(c, u, l):
-
-    return np.minimum(np.maximum(c, l), u)
-
-
-def fienup(con_upp, con_low):
+def fienup(anc_vec, con_upp, con_low):
 
     # initial guess
-    rec_vec = bidct2((con_upp + con_low) / 2)
+    rec_vec = anc_vec
 
-    for i in range(1024):
+    for inn_itr in range(INN_ITR):
+
         # copy
-        cpy_vec = rec_vec
+        cpy_vec = cp.deepcopy(rec_vec)
 
         # thresholding
         rec_vec = pw.swt2(rec_vec, QMF, DLV, norm=True)
-        rec_vec = thresh_swt2(rec_vec, 1)
+
+        for d in range(DLV):
+            # LL
+            rec_vec[d] = list(rec_vec[d])
+            rec_vec[d][0] = pw.threshold(rec_vec[d][0], REG_PRM)
+
+            # LH, HL, and HH
+            rec_vec[d][1] = list(rec_vec[d][1])
+            rec_vec[d][1][0] = pw.threshold(rec_vec[d][1][0], REG_PRM)
+            rec_vec[d][1][1] = pw.threshold(rec_vec[d][1][1], REG_PRM)
+            rec_vec[d][1][2] = pw.threshold(rec_vec[d][1][2], REG_PRM)
+
         rec_vec = pw.iswt2(rec_vec, QMF, DLV)
+
+        # proximal mapping for inner product
+        rec_vec = rec_vec + PEN_PRM * anc_vec
 
         # projection
         rec_vec = bdct2(rec_vec)
-        rec_vec = proj_dct2(rec_vec, con_upp, con_low)
+        rec_vec = np.minimum(rec_vec, con_upp)
+        rec_vec = np.maximum(rec_vec, con_low)
         rec_vec = bidct2(rec_vec)
 
         # acceleration
-        rec_vec = rec_vec + (i - 1) * (rec_vec - cpy_vec) / (i + 2)
+        rec_vec = rec_vec + (inn_itr - 1) * (rec_vec - cpy_vec) / (inn_itr + 2)
 
     return rec_vec
+
 
 if __name__ == '__main__':
 
     # original image
-    org_img = skimage.io.imread('data/camera.png')
-    
+    org_img = skimage.io.imread('0323.png')
+
     # image size
     row = org_img.shape[0]
     col = org_img.shape[1]
 
+    # make table
+    if QF < 50:
+        QTZ_TBL = np.round(((5000 / QF) * QTZ_TBL + 50) / 100)
+    else:
+        QTZ_TBL = np.round(((200 - 2 * QF) * QTZ_TBL + 50) / 100)
+
     # replicate quantization table
     rep_qtz_tbl = np.tile(QTZ_TBL, [row >> 3, col >> 3])
-
-    # replicate sign table
-    rep_sgn_tbl = np.tile(SGN_TBL, (row >> 3, col >> 3))
-
-    # index of known sign bit
-    ind_sbt = np.where(rep_sgn_tbl == True)
-
-    # index of unknown sign bit
-    ind_sbf = np.where(rep_sgn_tbl == False)
 
     # original coefficient
     org_cff = bdct2(org_img)
 
-    # quantization and dequantization
-    deg_cff = np.round(org_cff / rep_qtz_tbl) * rep_qtz_tbl
+    # quantization index in JPEG
+    qtz_ind_jpg = np.array(np.round(org_cff / rep_qtz_tbl), np.int64)
 
-    # reduction of sign bit
-    deg_cff[ind_sbf] = abs(deg_cff[ind_sbf])
+    # quantization index in our method
+    qtz_ind_our = np.abs(qtz_ind_jpg)
 
-    # constraint (upper)
-    con_upp = np.zeros([row, col])
-    con_upp[ind_sbt] = +deg_cff[ind_sbt]
-    con_upp[ind_sbf] = +deg_cff[ind_sbf] 
+    # inverse quantization
+    deg_cff_jpg = np.array(qtz_ind_jpg, np.float) * rep_qtz_tbl
+    deg_cff_our = np.array(qtz_ind_our, np.float) * rep_qtz_tbl
 
-    # constraint (lower)
-    con_low = np.zeros([row, col])
-    con_low[ind_sbt] = +deg_cff[ind_sbt]
-    con_low[ind_sbf] = -deg_cff[ind_sbf]
+    # upper constraint
+    con_upp = +np.array(deg_cff_our, np.float)
 
-    # sign retrieval via Fienup algorithm
-    rec_img = fienup(con_upp, con_low)
+    # lower constraint
+    con_low = -np.array(deg_cff_our, np.float)
+    con_low[0:row:8, 0:col:8] = -con_low[0:row:8, 0:col:8]
 
-    # clip
+    # anchor vector
+    anc_vec = bidct2((con_upp + con_low) / 2)
+
+    # sign retrieval via cascaded Fienup algorithm
+    for out_itr in range(OUT_ITR):
+        rec_img = fienup(anc_vec, con_upp, con_low)
+        anc_vec = rec_img
+
+    # original sign
+    org_sgn = np.sign(qtz_ind_jpg)
+    org_sgn[0:row:8, 0:col:8] = 0
+
+    # recovered sign
+    rec_sgn = np.sign(bdct2(rec_img))
+    rec_sgn[np.where(rec_sgn == 0)] = 1
+    rec_sgn[0:row:8, 0:col:8] = 0
+    rec_sgn[np.where(qtz_ind_our == 0)] = 0
+
+    # bit plane to be transmitted
+    bit_pln = org_sgn * rec_sgn
+
+    # probability of residual
+    num_pos = np.count_nonzero(bit_pln == +1)
+    num_neg = np.count_nonzero(bit_pln == -1)
+    prb_pos = num_pos / (num_pos + num_neg)
+    prb_neg = num_neg / (num_pos + num_neg)
+
+    # residual bits per significant index
+    bit_ind = -(prb_pos * np.log2(prb_pos) + prb_neg * np.log2(prb_neg))
+    print("Entropy of residual is {0:6.4f} [bits].".format(bit_ind))
+
+    # reconstructed image 
     rec_img = np.round(rec_img)
     rec_img = np.maximum(rec_img, 0)
     rec_img = np.minimum(rec_img, 255)
     rec_img = np.array(rec_img, np.uint8)
     skimage.io.imsave('rec.png', rec_img)
-
-    # PSNR
-    print("rec: {:4.2f}".format(skimage.metrics.peak_signal_noise_ratio(org_img, rec_img)))
-
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-    # for comparison
-
-    # random image 
-    rnd_sgn = np.sign(np.random.normal(0, 1, [row, col]))
-    rec_img = deg_cff
-    rec_img[ind_sbf] = rec_img[ind_sbf] * rnd_sgn[ind_sbf]
-    rec_img = bidct2(rec_img)
     
+    # dc only image
+    rec_img = bidct2((con_upp + con_low) / 2)
     rec_img = np.round(rec_img)
     rec_img = np.maximum(rec_img, 0)
     rec_img = np.minimum(rec_img, 255)
     rec_img = np.array(rec_img, np.uint8)
-    skimage.io.imsave('rnd.png', rec_img)
+    skimage.io.imsave('dco.png', rec_img)
 
-    print("rnd: {:4.2f}".format(skimage.metrics.peak_signal_noise_ratio(org_img, rec_img)))
-
-    # partial image 
-    rec_img = np.zeros([row, col])
-    rec_img[ind_sbt] = deg_cff[ind_sbt]
-    rec_img = bidct2(rec_img)
-    
+    # JPEG
+    rec_img = bidct2(deg_cff_jpg)
     rec_img = np.round(rec_img)
     rec_img = np.maximum(rec_img, 0)
     rec_img = np.minimum(rec_img, 255)
     rec_img = np.array(rec_img, np.uint8)
-    skimage.io.imsave('par.png', rec_img)
-
-    print("par: {:4.2f}".format(skimage.metrics.peak_signal_noise_ratio(org_img, rec_img)))
-
-    # jpg image
-    rec_img = np.round(org_cff / rep_qtz_tbl) * rep_qtz_tbl
-    rec_img = bidct2(rec_img)
-    
-    rec_img = np.round(rec_img)
-    rec_img = np.maximum(rec_img, 0)
-    rec_img = np.minimum(rec_img, 255)
-    rec_img = np.array(rec_img, np.uint8)
-    skimage.io.imsave('sdh.png', rec_img)
-
-    print("sdh: {:4.2f}".format(skimage.metrics.peak_signal_noise_ratio(org_img, rec_img)))
+    skimage.io.imsave('jpg.png', rec_img)
