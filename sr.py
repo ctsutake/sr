@@ -19,7 +19,7 @@ DLV = 1
 OUT_ITR = 3
 
 # inner iteration
-INN_ITR = 2
+INN_ITR = 200
 
 # regularization parameter
 REG_PRM = 1.0
@@ -168,7 +168,7 @@ if __name__ == '__main__':
 
     # residual bits per significant index
     bit_ind = -(prb_pos * np.log2(prb_pos) + prb_neg * np.log2(prb_neg))
-    print("Entropy of residual is {0:6.4f} [bits].".format(bit_ind))
+    print("Entropy of residual was {0:6.4f} [bits].".format(bit_ind))
 
     # reconstructed image 
     rec_img = np.round(rec_img)
@@ -177,13 +177,16 @@ if __name__ == '__main__':
     rec_img = np.array(rec_img, np.uint8)
     skimage.io.imsave('rec.png', rec_img)
     
-    # dc only image
-    rec_img = bidct2((con_upp + con_low) / 2)
+    # random image
+    rec_img = np.sign(np.random.randn(row, col))
+    rec_img = rec_img * deg_cff_jpg
+    rec_img[0:row:8, 0:col:8] = deg_cff_jpg[0:row:8, 0:col:8]
+    rec_img = bidct2(rec_img)
     rec_img = np.round(rec_img)
     rec_img = np.maximum(rec_img, 0)
     rec_img = np.minimum(rec_img, 255)
     rec_img = np.array(rec_img, np.uint8)
-    skimage.io.imsave('dco.png', rec_img)
+    skimage.io.imsave('rnd.png', rec_img)
 
     # JPEG
     rec_img = bidct2(deg_cff_jpg)
