@@ -1,6 +1,6 @@
 -----------------------------------------------------------------------------
 
-                    An Efficient Compression Technique 
+                    An Efficient Compression Method 
         for Sign Information of DCT Coefficients via Sign Retrieval            
  
 -----------------------------------------------------------------------------
