@@ -24,8 +24,8 @@ sr.m        : Main algorithm file
 1) Change skimage.io.imread('0***.png') in main function.
 2) Running `python3 sr.py' generates the following images.
 
-    -- rec.png (reconstructed image via CFA)
-    -- dco.png (DC only image)
+    -- rec.png (reconstructed image by using our Fienup algorithm)
+    -- rnd.png (reconstructed image by using randomized sign)
     -- jpg.png (JPEG)
 
 -----------------------------------------------------------------------------
